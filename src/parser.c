@@ -28,7 +28,11 @@ static FunctionBodyNode* parse_block_statement(SymbolTable* current_st); // New
 // --- AST Node Creation Helper Prototypes (if not already above) ---
 static ASTNode* create_assignment_statement_node(Token identifier_token, ASTNode* expression_node);
 static ASTNode* create_variable_usage_node(Token identifier_token);
-static ASTNode* create_if_statement_node(ASTNode* condition, FunctionBodyNode* then_block, FunctionBodyNode* else_block); // New
+static ASTNode* create_if_statement_node(ASTNode* condition, FunctionBodyNode* then_block, FunctionBodyNode* else_block); 
+static BinaryOperationNode* create_binary_operation_node(ASTNode* left, TokenType operator_token_type, ASTNode* right, Token context_token);
+
+// --- Helper Function Prototypes ---
+static const char* token_type_to_string(TokenType type); // New
 
 
 // --- Helper Function Implementations ---
@@ -70,6 +74,37 @@ static Token eat_token(TokenType expected_type) {
         report_error(error_msg, current_token);
     }
     return consumed_token;
+}
+
+// Helper function to convert TokenType to a string representation
+static const char* token_type_to_string(TokenType type) {
+    switch (type) {
+        case TOKEN_INT:             return "'int' keyword";
+        case TOKEN_RETURN:          return "'return' keyword";
+        case TOKEN_IF:              return "'if' keyword";
+        case TOKEN_ELSE:            return "'else' keyword";
+        case TOKEN_IDENTIFIER:      return "identifier";
+        case TOKEN_INTEGER_LITERAL: return "integer literal";
+        case TOKEN_LPAREN:          return "'('";
+        case TOKEN_RPAREN:          return "')'";
+        case TOKEN_LBRACE:          return "'{'";
+        case TOKEN_RBRACE:          return "'}'";
+        case TOKEN_SEMICOLON:       return "';'";
+        case TOKEN_PLUS:            return "'+'";
+        case TOKEN_MINUS:           return "'-'";
+        case TOKEN_STAR:            return "'*'";
+        case TOKEN_SLASH:           return "'/'";
+        case TOKEN_EQUAL:           return "'=' (assignment)";
+        case TOKEN_EQ_EQ:           return "'==' (equality)";
+        case TOKEN_NOT_EQ:          return "'!='";
+        case TOKEN_LESS:            return "'<'";
+        case TOKEN_LESS_EQ:         return "'<='";
+        case TOKEN_GREATER:         return "'>'";
+        case TOKEN_GREATER_EQ:      return "'>='";
+        case TOKEN_EOF:             return "end of file";
+        case TOKEN_UNKNOWN:         return "unknown token";
+        default:                    return "undefined token type"; // Should not happen
+    }
 }
 
 // Peek at the current token without consuming it
@@ -117,12 +152,10 @@ static ReturnStatementNode* create_return_statement_node(ASTNode* expression) {
 static FunctionBodyNode* create_function_body_node() {
     FunctionBodyNode* node = (FunctionBodyNode*)malloc(sizeof(FunctionBodyNode));
     if (!node) {
-        // No token available here for report_error, critical failure
-        fprintf(stderr, "Critical: Memory allocation failed for FunctionBodyNode.\n");
-        parser_error_occurred = 1; // Set error flag
+        report_error("Memory allocation failed for FunctionBodyNode", peek_token());
         return NULL;
     }
-    node->base.type = AST_NODE_FUNCTION_BODY; // Corrected type
+    node->base.type = AST_NODE_FUNCTION_BODY; 
                                                  // It should be a distinct type or part of FunctionDeclaration.
                                                  // Let's assume FunctionBodyNode has its own type or this is a typo.
                                                  // For now, let's give it a placeholder type if one isn't defined,
@@ -180,11 +213,7 @@ static FunctionDeclarationNode* create_function_declaration_node(Token name, Fun
 static ProgramNode* create_program_node(FunctionDeclarationNode* func_decl) {
     ProgramNode* node = (ProgramNode*)malloc(sizeof(ProgramNode));
     if (!node) {
-        // No specific token for ProgramNode, this is a general allocation failure.
-        // report_error needs a token. We can use the function declaration's token or a dummy.
-        // This is a critical error.
-        fprintf(stderr, "Critical: Memory allocation failed for ProgramNode.\n");
-        parser_error_occurred = 1; // Set error flag
+        report_error("Memory allocation failed for ProgramNode", peek_token());
         return NULL;
     }
     node->base.type = AST_NODE_PROGRAM;
@@ -195,12 +224,8 @@ static ProgramNode* create_program_node(FunctionDeclarationNode* func_decl) {
 static BinaryOperationNode* create_binary_operation_node(ASTNode* left, TokenType operator_token_type, ASTNode* right) {
     BinaryOperationNode* node = (BinaryOperationNode*)malloc(sizeof(BinaryOperationNode));
     if (!node) {
-        // Cannot use report_error as it needs a token. This is a critical malloc failure.
-        fprintf(stderr, "Critical: Memory allocation failed for BinaryOperationNode.\n");
-        parser_error_occurred = 1; // Set error flag
-        // Free children if they were passed, as they won't be part of a successfully created node.
-        // However, the caller might also do this. For safety, let's free them here.
-        free_ast_node(left);
+        report_error("Memory allocation failed for BinaryOperationNode", context_token); 
+        free_ast_node(left);  // Free children if parent allocation fails
         free_ast_node(right);
         return NULL;
     }
@@ -461,7 +486,7 @@ static ASTNode* parse_multiplicative_expression(SymbolTable* current_st) {
             return NULL;
         }
 
-        left_node = (ASTNode*)create_binary_operation_node(left_node, operator_token.type, right_node);
+        left_node = (ASTNode*)create_binary_operation_node(left_node, operator_token.type, right_node, operator_token); 
         if (parser_error_occurred || !left_node) { 
             return NULL; 
         }
@@ -490,7 +515,7 @@ static ASTNode* parse_additive_expression(SymbolTable* current_st) {
             return NULL;
         }
 
-        left_node = (ASTNode*)create_binary_operation_node(left_node, operator_token.type, right_node);
+        left_node = (ASTNode*)create_binary_operation_node(left_node, operator_token.type, right_node, operator_token); 
         if (parser_error_occurred || !left_node) { 
             return NULL; 
         }
@@ -522,7 +547,7 @@ static ASTNode* parse_comparison_expression(SymbolTable* current_st) {
             return NULL;
         }
 
-        left_node = (ASTNode*)create_binary_operation_node(left_node, operator_token.type, right_node);
+        left_node = (ASTNode*)create_binary_operation_node(left_node, operator_token.type, right_node, operator_token); 
         if (parser_error_occurred || !left_node) {
             // create_binary_operation_node should handle freeing children on its own failure
             return NULL;

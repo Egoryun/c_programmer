@@ -6,6 +6,14 @@
 
 #define MAX_SYMBOLS 50
 
+// Status codes for symbol table operations
+typedef enum {
+    SYMBOL_TABLE_SUCCESS,
+    SYMBOL_TABLE_ERROR_ALREADY_EXISTS,
+    SYMBOL_TABLE_ERROR_TABLE_FULL,
+    SYMBOL_TABLE_ERROR_MALLOC_FAILED
+} SymbolTableStatus;
+
 // Symbol Structure
 typedef struct {
     char* name;         // Variable name (will be strdup'd)
@@ -23,7 +31,7 @@ typedef struct {
 
 // Function Prototypes
 void symbol_table_init(SymbolTable* st);
-bool symbol_table_add(SymbolTable* st, const char* name, TokenType type);
+SymbolTableStatus symbol_table_add(SymbolTable* st, const char* name, TokenType type); // Modified return type
 Symbol* symbol_table_lookup(SymbolTable* st, const char* name);
 void symbol_table_destroy(SymbolTable* st);
 
