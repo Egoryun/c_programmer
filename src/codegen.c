@@ -129,12 +129,29 @@ static void generate_expression_assembly(ASTNode* expression_node, FILE* outfile
                     generate_expression_assembly(bin_op_node->left, outfile);
                     // 4. Pop RHS from stack into %rbx
                     fprintf(outfile, "    popq %%rbx\n");
-                    // 5. Add %ebx (RHS) to %eax (LHS), result in %eax
-                    fprintf(outfile, "    addl %%ebx, %%eax\n");
-                } else {
-                    fprintf(stderr, "Codegen Error: Unsupported binary operator type: %d. Defaulting expression value to 0.\n", bin_op_node->operator_token_type);
-                    fprintf(outfile, "    movl $0, %%eax # Default for unsupported binary operator\n");
-                }
+                    // 5. Perform operation based on token type
+                    switch (bin_op_node->operator_token_type) {
+                        case TOKEN_PLUS:
+                            fprintf(outfile, "    addl %%ebx, %%eax\n");
+                            break;
+                        case TOKEN_MINUS:
+                            fprintf(outfile, "    subl %%ebx, %%eax\n"); // %eax = %eax - %ebx (LHS - RHS)
+                            break;
+                        case TOKEN_STAR:
+                            fprintf(outfile, "    imull %%ebx, %%eax\n"); // %eax = %eax * %ebx (LHS * RHS)
+                            break;
+                        case TOKEN_SLASH:
+                            // LHS (dividend) is in %eax, RHS (divisor) is in %ebx.
+                            // Need to sign-extend %eax into %edx:%eax for idivl.
+                            fprintf(outfile, "    cdq\n");
+                            fprintf(outfile, "    idivl %%ebx\n"); // Quotient in %eax, Remainder in %edx
+                            break;
+                        default:
+                            fprintf(stderr, "Codegen Error: Unsupported binary operator type: %d. Defaulting expression value to 0.\n", bin_op_node->operator_token_type);
+                            fprintf(outfile, "    movl $0, %%eax # Default for unsupported binary operator\n");
+                            break;
+                    }
+                } // Removed the 'else' block that was here, as the switch default handles unsupported operators.
             }
             break;
         default:

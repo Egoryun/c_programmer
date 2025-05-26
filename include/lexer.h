@@ -13,6 +13,9 @@ typedef enum {
     TOKEN_RBRACE,          // }
     TOKEN_SEMICOLON,       // ;
     TOKEN_PLUS,            // +
+    TOKEN_MINUS,           // -
+    TOKEN_STAR,            // *
+    TOKEN_SLASH,           // /
     TOKEN_EOF,             // End of Input
     TOKEN_UNKNOWN          // Unrecognized character
 } TokenType;

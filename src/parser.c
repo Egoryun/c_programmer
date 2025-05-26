@@ -16,6 +16,8 @@ static FunctionBodyNode* parse_function_body();
 static ASTNode* parse_statement(); // Changed from parse_return_statement
 static ReturnStatementNode* parse_return_statement(); // Still needed, called by parse_statement
 static ASTNode* parse_expression();
+static ASTNode* parse_term();    // New for operator precedence
+static ASTNode* parse_factor();  // New for operator precedence
 static IntegerLiteralNode* parse_integer_literal();
 
 // --- Helper Function Implementations ---
@@ -293,8 +295,117 @@ static ASTNode* parse_expression() {
     }
 
     // If no operator follows, it's just the initially parsed left_node (integer literal)
+    return left_node; // This is the fully parsed expression
+}
+
+// factor : INTEGER_LITERAL | TOKEN_LPAREN expression TOKEN_RPAREN
+static ASTNode* parse_factor() {
+    if (peek_token().type == TOKEN_LPAREN) {
+        eat_token(TOKEN_LPAREN); // Consume '('
+        if (parser_error_occurred) {
+            return NULL; // Error reported by eat_token
+        }
+
+        ASTNode* expr_node = parse_expression(); // Parse the sub-expression
+        if (parser_error_occurred || !expr_node) {
+            // Error reported by parse_expression or it returned NULL.
+            // No need to free expr_node here as it should be NULL or handled by parse_expression.
+            return NULL;
+        }
+
+        // Expect and consume ')'
+        Token rparen_token = eat_token(TOKEN_RPAREN);
+        if (parser_error_occurred) { // eat_token failed (missing ')')
+            free_ast_node(expr_node); // Clean up the successfully parsed sub-expression
+            return NULL;
+        }
+        // If eat_token did not set parser_error_occurred but returned a non-RPAREN token (should not happen with current eat_token)
+        // this would be an issue. Assuming eat_token sets the flag on mismatch.
+        
+        return expr_node;
+    } else if (peek_token().type == TOKEN_INTEGER_LITERAL) {
+        ASTNode* node = (ASTNode*)parse_integer_literal();
+        if (parser_error_occurred) { // If parse_integer_literal failed
+            return NULL;
+        }
+        // No need for the explicit !node check here if parse_integer_literal always reports on failure
+        // and sets parser_error_occurred or returns NULL consistently.
+        // The original check:
+        // if (!node) { 
+        //     if (!parser_error_occurred) { report_error("Expected an integer literal", peek_token()); }
+        //     return NULL;
+        // }
+        return node;
+    } else {
+        report_error("Expected an integer literal or '(' for an expression", peek_token());
+        return NULL;
+    }
+}
+
+// term : factor ( (TOKEN_STAR | TOKEN_SLASH) factor )*
+static ASTNode* parse_term() {
+    ASTNode* left_node = parse_factor();
+    if (parser_error_occurred || !left_node) {
+        return NULL; // Error already reported by parse_factor or its children
+    }
+
+    while (peek_token().type == TOKEN_STAR || peek_token().type == TOKEN_SLASH) {
+        Token operator_token = eat_token(peek_token().type); // Consume TOKEN_STAR or TOKEN_SLASH
+        if (parser_error_occurred) { // eat_token failed
+            free_ast_node(left_node);
+            return NULL;
+        }
+
+        ASTNode* right_node = parse_factor();
+        if (parser_error_occurred || !right_node) {
+            // Error reported by parse_factor or its children for the right operand.
+            free_ast_node(left_node); // Clean up the successfully parsed left node.
+            return NULL;
+        }
+
+        left_node = (ASTNode*)create_binary_operation_node(left_node, operator_token.type, right_node);
+        if (parser_error_occurred || !left_node) { // create_binary_operation_node failed
+            // create_binary_operation_node should free its children on failure,
+            // so left_node and right_node (original values) would have been freed.
+            // If left_node became NULL due to this, the loop condition will handle it or next check.
+            return NULL; // Propagate error
+        }
+    }
     return left_node;
 }
+
+// expression : term ( (TOKEN_PLUS | TOKEN_MINUS) term )*
+// (Modified from the previous simple version)
+static ASTNode* parse_expression() {
+    ASTNode* left_node = parse_term();
+    if (parser_error_occurred || !left_node) {
+        // Error already reported by parse_term or its children.
+        return NULL;
+    }
+
+    while (peek_token().type == TOKEN_PLUS || peek_token().type == TOKEN_MINUS) {
+        Token operator_token = eat_token(peek_token().type); // Consume TOKEN_PLUS or TOKEN_MINUS
+        if (parser_error_occurred) { // eat_token failed
+            free_ast_node(left_node);
+            return NULL;
+        }
+
+        ASTNode* right_node = parse_term();
+        if (parser_error_occurred || !right_node) {
+            // Error reported by parse_term or its children for the right operand.
+            free_ast_node(left_node); // Clean up the successfully parsed left node.
+            return NULL;
+        }
+
+        left_node = (ASTNode*)create_binary_operation_node(left_node, operator_token.type, right_node);
+        if (parser_error_occurred || !left_node) { // create_binary_operation_node failed
+            // create_binary_operation_node should free its children on failure.
+            return NULL; // Propagate error
+        }
+    }
+    return left_node;
+}
+
 
 static ReturnStatementNode* parse_return_statement() {
     Token return_keyword_token = eat_token(TOKEN_RETURN); // Keep for location if needed

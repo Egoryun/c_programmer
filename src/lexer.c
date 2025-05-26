@@ -84,6 +84,21 @@ Token get_next_token(const char** source_code_pointer) {
                 *source_code_pointer = current;
                 current_column++;
                 return make_token(TOKEN_PLUS, start_of_lexeme, 1, current_line, token_start_column);
+            case '-':
+                current++;
+                *source_code_pointer = current;
+                current_column++;
+                return make_token(TOKEN_MINUS, start_of_lexeme, 1, current_line, token_start_column);
+            case '*':
+                current++;
+                *source_code_pointer = current;
+                current_column++;
+                return make_token(TOKEN_STAR, start_of_lexeme, 1, current_line, token_start_column);
+            case '/':
+                current++;
+                *source_code_pointer = current;
+                current_column++;
+                return make_token(TOKEN_SLASH, start_of_lexeme, 1, current_line, token_start_column);
 
             default:
                 if (isalpha(*current) || *current == '_') { // Identifiers or keywords
