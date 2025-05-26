@@ -16,6 +16,15 @@ typedef enum {
     TOKEN_MINUS,           // -
     TOKEN_STAR,            // *
     TOKEN_SLASH,           // /
+    TOKEN_EQUAL,           // = (for assignment)
+    TOKEN_EQ_EQ,           // == (for comparison)
+    TOKEN_NOT_EQ,          // !=
+    TOKEN_LESS,            // <
+    TOKEN_LESS_EQ,         // <=
+    TOKEN_GREATER,         // >
+    TOKEN_GREATER_EQ,      // >=
+    TOKEN_IF,              // if
+    TOKEN_ELSE,            // else
     TOKEN_EOF,             // End of Input
     TOKEN_UNKNOWN          // Unrecognized character
 } TokenType;

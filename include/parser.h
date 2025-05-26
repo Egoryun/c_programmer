@@ -2,6 +2,7 @@
 #define PARSER_H
 
 #include "lexer.h" // For Token and TokenType
+#include "symbol_table.h" // For SymbolTable
 
 // --- AST Node Types ---
 typedef enum {
@@ -9,7 +10,12 @@ typedef enum {
     AST_NODE_FUNCTION_DECLARATION,
     AST_NODE_RETURN_STATEMENT,
     AST_NODE_INTEGER_LITERAL,
-    AST_NODE_BINARY_OPERATION // New
+    AST_NODE_BINARY_OPERATION,
+    AST_NODE_VARIABLE_DECLARATION, 
+    AST_NODE_ASSIGNMENT_STATEMENT, 
+    AST_NODE_VARIABLE_USAGE,       
+    AST_NODE_IF_STATEMENT,         // New
+    AST_NODE_FUNCTION_BODY,        // New (or ensure it's correctly placed if pre-existing)
     // Add more types as the language grows
 } ASTNodeType;
 
@@ -36,11 +42,39 @@ typedef struct BinaryOperationNode {
     struct ASTNode* right;       // Right-hand side expression
 } BinaryOperationNode;
 
+// Variable Declaration: e.g., int x;
+typedef struct VariableDeclarationNode {
+    ASTNode base;              // type will be AST_NODE_VARIABLE_DECLARATION
+    TokenType type_token_type; // Should be TOKEN_INT for now
+    char* variable_name;       // strdup'd from token
+} VariableDeclarationNode;
+
+// Assignment Statement: e.g., x = 42;
+typedef struct AssignmentStatementNode {
+    ASTNode base;               // type will be AST_NODE_ASSIGNMENT_STATEMENT
+    char* variable_name;        // strdup'd from token
+    struct ASTNode* expression; // AST for the right-hand side
+} AssignmentStatementNode;
+
+// Variable Usage (in an expression): e.g., return x; or y = x + 1;
+typedef struct VariableUsageNode {
+    ASTNode base;              // type will be AST_NODE_VARIABLE_USAGE
+    char* variable_name;       // strdup'd from token
+} VariableUsageNode;
+
 // Return Statement: e.g., return 42;
 typedef struct {
     ASTNode base;
     ASTNode* expression; // The expression being returned
 } ReturnStatementNode;
+
+// If Statement: e.g., if (condition) { ... } else { ... }
+typedef struct IfStatementNode {
+    ASTNode base;                       // type will be AST_NODE_IF_STATEMENT
+    struct ASTNode* condition;          // Expression for the condition
+    struct FunctionBodyNode* then_block; // Statements for the 'then' part
+    struct FunctionBodyNode* else_block; // Statements for the 'else' part (can be NULL)
+} IfStatementNode;
 
 // Function Body: A sequence of statements
 typedef struct {
@@ -51,9 +85,10 @@ typedef struct {
 } FunctionBodyNode;
 
 // Function Declaration: e.g., int main() { ... }
-typedef struct {
+typedef struct FunctionDeclarationNode { // Added struct tag for self-reference if needed later
     ASTNode base;
     Token function_name; // e.g., "main"
+    SymbolTable symbol_table; // For local variables
     FunctionBodyNode* body;
 } FunctionDeclarationNode;
 

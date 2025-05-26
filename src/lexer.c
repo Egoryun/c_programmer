@@ -99,6 +99,54 @@ Token get_next_token(const char** source_code_pointer) {
                 *source_code_pointer = current;
                 current_column++;
                 return make_token(TOKEN_SLASH, start_of_lexeme, 1, current_line, token_start_column);
+            case '=':
+                current++;
+                current_column++;
+                if (*current == '=') { // ==
+                    current++;
+                    current_column++;
+                    *source_code_pointer = current;
+                    return make_token(TOKEN_EQ_EQ, start_of_lexeme, 2, current_line, token_start_column);
+                } else { // = (assignment)
+                    *source_code_pointer = current;
+                    return make_token(TOKEN_EQUAL, start_of_lexeme, 1, current_line, token_start_column);
+                }
+            case '!':
+                current++;
+                current_column++;
+                if (*current == '=') { // !=
+                    current++;
+                    current_column++;
+                    *source_code_pointer = current;
+                    return make_token(TOKEN_NOT_EQ, start_of_lexeme, 2, current_line, token_start_column);
+                } else { // Single '!' - not part of this task's operators, treat as unknown for now
+                    *source_code_pointer = current;
+                    return make_token(TOKEN_UNKNOWN, start_of_lexeme, 1, current_line, token_start_column);
+                }
+            case '<':
+                current++;
+                current_column++;
+                if (*current == '=') { // <=
+                    current++;
+                    current_column++;
+                    *source_code_pointer = current;
+                    return make_token(TOKEN_LESS_EQ, start_of_lexeme, 2, current_line, token_start_column);
+                } else { // <
+                    *source_code_pointer = current;
+                    return make_token(TOKEN_LESS, start_of_lexeme, 1, current_line, token_start_column);
+                }
+            case '>':
+                current++;
+                current_column++;
+                if (*current == '=') { // >=
+                    current++;
+                    current_column++;
+                    *source_code_pointer = current;
+                    return make_token(TOKEN_GREATER_EQ, start_of_lexeme, 2, current_line, token_start_column);
+                } else { // >
+                    *source_code_pointer = current;
+                    return make_token(TOKEN_GREATER, start_of_lexeme, 1, current_line, token_start_column);
+                }
 
             default:
                 if (isalpha(*current) || *current == '_') { // Identifiers or keywords

@@ -12,13 +12,24 @@ static int parser_error_occurred = 0; // Flag to track if an error has occurred
 // --- Forward declarations for recursive descent functions ---
 static ProgramNode* parse_program();
 static FunctionDeclarationNode* parse_function_declaration();
-static FunctionBodyNode* parse_function_body();
-static ASTNode* parse_statement(); // Changed from parse_return_statement
-static ReturnStatementNode* parse_return_statement(); // Still needed, called by parse_statement
-static ASTNode* parse_expression();
-static ASTNode* parse_term();    // New for operator precedence
-static ASTNode* parse_factor();  // New for operator precedence
+static FunctionBodyNode* parse_function_body(SymbolTable* current_st); // Modified
+static ASTNode* parse_statement(SymbolTable* current_st);             // Modified
+static ASTNode* parse_variable_declaration_statement(SymbolTable* current_st);
+static ReturnStatementNode* parse_return_statement(SymbolTable* current_st); 
+static ASTNode* parse_expression(SymbolTable* current_st);                        // New top-level
+static ASTNode* parse_comparison_expression(SymbolTable* current_st);
+static ASTNode* parse_additive_expression(SymbolTable* current_st);
+static ASTNode* parse_multiplicative_expression(SymbolTable* current_st);
+static ASTNode* parse_primary_expression(SymbolTable* current_st);
 static IntegerLiteralNode* parse_integer_literal();
+static ASTNode* parse_if_statement(SymbolTable* current_st); // New
+static FunctionBodyNode* parse_block_statement(SymbolTable* current_st); // New
+
+// --- AST Node Creation Helper Prototypes (if not already above) ---
+static ASTNode* create_assignment_statement_node(Token identifier_token, ASTNode* expression_node);
+static ASTNode* create_variable_usage_node(Token identifier_token);
+static ASTNode* create_if_statement_node(ASTNode* condition, FunctionBodyNode* then_block, FunctionBodyNode* else_block); // New
+
 
 // --- Helper Function Implementations ---
 
@@ -111,7 +122,7 @@ static FunctionBodyNode* create_function_body_node() {
         parser_error_occurred = 1; // Set error flag
         return NULL;
     }
-    node->base.type = AST_NODE_FUNCTION_DECLARATION; // This seems incorrect, FunctionBody is not a declaration.
+    node->base.type = AST_NODE_FUNCTION_BODY; // Corrected type
                                                  // It should be a distinct type or part of FunctionDeclaration.
                                                  // Let's assume FunctionBodyNode has its own type or this is a typo.
                                                  // For now, let's give it a placeholder type if one isn't defined,
@@ -161,7 +172,8 @@ static FunctionDeclarationNode* create_function_declaration_node(Token name, Fun
     }
     node->base.type = AST_NODE_FUNCTION_DECLARATION;
     node->function_name = name;
-    node->body = body;
+    symbol_table_init(&node->symbol_table); // Initialize symbol table
+    node->body = body; // Body is parsed after symbol table is available if needed
     return node;
 }
 
@@ -199,6 +211,67 @@ static BinaryOperationNode* create_binary_operation_node(ASTNode* left, TokenTyp
     return node;
 }
 
+static ASTNode* create_assignment_statement_node(Token identifier_token, ASTNode* expression_node) {
+    AssignmentStatementNode* assign_node = (AssignmentStatementNode*)malloc(sizeof(AssignmentStatementNode));
+    if (!assign_node) {
+        report_error("Memory allocation failed for AssignmentStatementNode", identifier_token);
+        // expression_node should be freed by the caller if this fails
+        return NULL;
+    }
+    assign_node->base.type = AST_NODE_ASSIGNMENT_STATEMENT;
+    
+    assign_node->variable_name = (char*)malloc(identifier_token.lexeme_length + 1);
+    if (!assign_node->variable_name) {
+        report_error("Memory allocation failed for assignment variable name string", identifier_token);
+        free(assign_node);
+        // expression_node should be freed by the caller
+        return NULL;
+    }
+    strncpy(assign_node->variable_name, identifier_token.lexeme_start, identifier_token.lexeme_length);
+    assign_node->variable_name[identifier_token.lexeme_length] = '\0';
+    
+    assign_node->expression = expression_node;
+    return (ASTNode*)assign_node;
+}
+
+static ASTNode* create_variable_usage_node(Token identifier_token) {
+    VariableUsageNode* var_node = (VariableUsageNode*)malloc(sizeof(VariableUsageNode));
+    if (!var_node) {
+        report_error("Memory allocation failed for VariableUsageNode", identifier_token);
+        return NULL;
+    }
+    var_node->base.type = AST_NODE_VARIABLE_USAGE;
+    
+    var_node->variable_name = (char*)malloc(identifier_token.lexeme_length + 1);
+    if (!var_node->variable_name) {
+        report_error("Memory allocation failed for variable usage name string", identifier_token);
+        free(var_node);
+        return NULL;
+    }
+    strncpy(var_node->variable_name, identifier_token.lexeme_start, identifier_token.lexeme_length);
+    var_node->variable_name[identifier_token.lexeme_length] = '\0';
+    
+    return (ASTNode*)var_node;
+}
+
+static ASTNode* create_if_statement_node(ASTNode* condition, FunctionBodyNode* then_block, FunctionBodyNode* else_block) {
+    IfStatementNode* if_node = (IfStatementNode*)malloc(sizeof(IfStatementNode));
+    if (!if_node) {
+        report_error("Memory allocation failed for IfStatementNode", current_token); // Use current_token as best guess
+        free_ast_node(condition);
+        free_ast_node((ASTNode*)then_block);
+        if (else_block) {
+            free_ast_node((ASTNode*)else_block);
+        }
+        return NULL;
+    }
+    if_node->base.type = AST_NODE_IF_STATEMENT;
+    if_node->condition = condition;
+    if_node->then_block = then_block;
+    if_node->else_block = else_block;
+    return (ASTNode*)if_node;
+}
+
 
 // --- AST Freeing Functions ---
 
@@ -218,6 +291,59 @@ void free_ast_node(ASTNode* node) {
                 free(bin_op_node);
             }
             break;
+        case AST_NODE_IF_STATEMENT:
+            {
+                IfStatementNode* if_node = (IfStatementNode*)node;
+                free_ast_node(if_node->condition);
+                free_ast_node((ASTNode*)if_node->then_block); // then_block is a FunctionBodyNode
+                if (if_node->else_block != NULL) {
+                    free_ast_node((ASTNode*)if_node->else_block); // else_block is also a FunctionBodyNode
+                }
+                free(if_node); // Free the IfStatementNode itself
+            }
+            break;
+        case AST_NODE_FUNCTION_BODY: // New case for freeing FunctionBodyNode
+            {
+                FunctionBodyNode* body_node = (FunctionBodyNode*)node;
+                for (int i = 0; i < body_node->statement_count; ++i) {
+                    free_ast_node(body_node->statements[i]);
+                }
+                if (body_node->statements) { // Ensure statements array is not NULL before freeing
+                    free(body_node->statements);
+                }
+                free(body_node); // Free the FunctionBodyNode itself
+            }
+            break;
+        case AST_NODE_VARIABLE_DECLARATION:
+            {
+                VariableDeclarationNode* decl_node = (VariableDeclarationNode*)node;
+                if (decl_node->variable_name) {
+                    free(decl_node->variable_name);
+                }
+                // No other child AST nodes to free for VariableDeclarationNode
+                free(decl_node); // Free the node itself
+            }
+            break;
+        case AST_NODE_ASSIGNMENT_STATEMENT:
+            {
+                AssignmentStatementNode* assign_node = (AssignmentStatementNode*)node;
+                if (assign_node->variable_name) {
+                    free(assign_node->variable_name);
+                }
+                free_ast_node(assign_node->expression); // Free the RHS expression tree
+                free(assign_node); // Free the node itself
+            }
+            break;
+        case AST_NODE_VARIABLE_USAGE:
+            {
+                VariableUsageNode* var_usage_node = (VariableUsageNode*)node;
+                if (var_usage_node->variable_name) {
+                    free(var_usage_node->variable_name);
+                }
+                // No child AST nodes to free for VariableUsageNode
+                free(var_usage_node); // Free the node itself
+            }
+            break;
         case AST_NODE_RETURN_STATEMENT:
             {
                 ReturnStatementNode* ret_node = (ReturnStatementNode*)node;
@@ -228,6 +354,7 @@ void free_ast_node(ASTNode* node) {
         case AST_NODE_FUNCTION_DECLARATION:
             {
                 FunctionDeclarationNode* func_node = (FunctionDeclarationNode*)node;
+                symbol_table_destroy(&func_node->symbol_table); // Destroy symbol table
                 if (func_node->body) {
                     for (int i = 0; i < func_node->body->statement_count; ++i) {
                         free_ast_node(func_node->body->statements[i]);
@@ -235,23 +362,27 @@ void free_ast_node(ASTNode* node) {
                     free(func_node->body->statements); // Free the array of pointers
                     free(func_node->body);             // Free the FunctionBodyNode itself
                 }
-                free(func_node);
+                free(func_node); // Free the node itself
             }
             break;
         case AST_NODE_PROGRAM:
              {
                 ProgramNode* prog_node = (ProgramNode*)node;
                 free_ast_node((ASTNode*)prog_node->function_declaration);
-                free(prog_node);
+                free(prog_node); // Free the node itself
             }
             break;
-        // AST_NODE_FUNCTION_BODY is not a type used in this switch, it's part of FunctionDeclarationNode
+        // AST_NODE_FUNCTION_BODY is not a type used in this switch, it's part of FunctionDeclarationNode.
+        // The base 'node' is freed within each case for clarity and consistency here.
         default:
             fprintf(stderr, "Warning: Unknown AST node type %d in free_ast_node at line %d, col %d (approx).\n",
                     node->type, current_token.line, current_token.column); // current_token is a guess for location
-            free(node); // Attempt to free base node anyway
+            free(node); // Attempt to free base node anyway, if not freed by a specific case.
             break;
     }
+    // Note: The pattern is to free 'node' within each case.
+    // If any case does not free 'node', it should be freed here or the pattern adjusted.
+    // Current implementation frees 'node' in each specific case.
 }
 
 void free_program_node(ProgramNode* program_node) {
@@ -267,153 +398,152 @@ static IntegerLiteralNode* parse_integer_literal() {
     return create_integer_literal_node(int_token);
 }
 
-static ASTNode* parse_expression() {
-    ASTNode* left_node = (ASTNode*)parse_integer_literal();
-    if (parser_error_occurred || !left_node) {
-        // Error already reported by parse_integer_literal or it returned NULL.
-        return NULL;
-    }
-
-    // Check for a potential binary operator (currently only '+')
-    if (peek_token().type == TOKEN_PLUS) {
-        Token operator_token = eat_token(TOKEN_PLUS); // Consume the '+' token
-        if (parser_error_occurred) { // Check if eat_token failed
-            free_ast_node(left_node); // Clean up the left node
-            return NULL;
-        }
-
-        ASTNode* right_node = (ASTNode*)parse_integer_literal();
-        if (parser_error_occurred || !right_node) {
-            // Error reported by parse_integer_literal or it returned NULL for the right operand.
-            free_ast_node(left_node); // Clean up the successfully parsed left node
-            // right_node is either NULL or its cleanup is handled by parse_integer_literal on error
-            return NULL;
-        }
-
-        // Create and return the binary operation node
-        return (ASTNode*)create_binary_operation_node(left_node, operator_token.type, right_node);
-    }
-
-    // If no operator follows, it's just the initially parsed left_node (integer literal)
-    return left_node; // This is the fully parsed expression
-}
-
-// factor : INTEGER_LITERAL | TOKEN_LPAREN expression TOKEN_RPAREN
-static ASTNode* parse_factor() {
+// factor : INTEGER_LITERAL | TOKEN_IDENTIFIER | TOKEN_LPAREN expression TOKEN_RPAREN
+// Renamed to parse_primary_expression
+static ASTNode* parse_primary_expression(SymbolTable* current_st) { 
     if (peek_token().type == TOKEN_LPAREN) {
-        eat_token(TOKEN_LPAREN); // Consume '('
+        eat_token(TOKEN_LPAREN); 
+        if (parser_error_occurred) return NULL;
+
+        ASTNode* expr_node = parse_expression(current_st); // Call new top-level parse_expression
+        if (parser_error_occurred || !expr_node) return NULL;
+
+        eat_token(TOKEN_RPAREN);
         if (parser_error_occurred) {
-            return NULL; // Error reported by eat_token
-        }
-
-        ASTNode* expr_node = parse_expression(); // Parse the sub-expression
-        if (parser_error_occurred || !expr_node) {
-            // Error reported by parse_expression or it returned NULL.
-            // No need to free expr_node here as it should be NULL or handled by parse_expression.
+            free_ast_node(expr_node);
             return NULL;
         }
-
-        // Expect and consume ')'
-        Token rparen_token = eat_token(TOKEN_RPAREN);
-        if (parser_error_occurred) { // eat_token failed (missing ')')
-            free_ast_node(expr_node); // Clean up the successfully parsed sub-expression
-            return NULL;
-        }
-        // If eat_token did not set parser_error_occurred but returned a non-RPAREN token (should not happen with current eat_token)
-        // this would be an issue. Assuming eat_token sets the flag on mismatch.
-        
         return expr_node;
     } else if (peek_token().type == TOKEN_INTEGER_LITERAL) {
-        ASTNode* node = (ASTNode*)parse_integer_literal();
-        if (parser_error_occurred) { // If parse_integer_literal failed
+        return (ASTNode*)parse_integer_literal();
+    } else if (peek_token().type == TOKEN_IDENTIFIER) {
+        Token identifier_token = peek_token();
+        char var_name_buffer[256]; 
+        if (identifier_token.lexeme_length >= 256) {
+             report_error("Identifier too long", identifier_token);
+             return NULL;
+        }
+        strncpy(var_name_buffer, identifier_token.lexeme_start, identifier_token.lexeme_length);
+        var_name_buffer[identifier_token.lexeme_length] = '\0';
+
+        if (symbol_table_lookup(current_st, var_name_buffer) == NULL) {
+            char error_msg[300];
+            sprintf(error_msg, "Variable '%.*s' not declared before use.", identifier_token.lexeme_length, identifier_token.lexeme_start);
+            report_error(error_msg, identifier_token);
             return NULL;
         }
-        // No need for the explicit !node check here if parse_integer_literal always reports on failure
-        // and sets parser_error_occurred or returns NULL consistently.
-        // The original check:
-        // if (!node) { 
-        //     if (!parser_error_occurred) { report_error("Expected an integer literal", peek_token()); }
-        //     return NULL;
-        // }
-        return node;
+        eat_token(TOKEN_IDENTIFIER); 
+        return create_variable_usage_node(identifier_token);
     } else {
-        report_error("Expected an integer literal or '(' for an expression", peek_token());
+        report_error("Expected integer literal, identifier, or '(' in expression", peek_token());
         return NULL;
     }
 }
 
 // term : factor ( (TOKEN_STAR | TOKEN_SLASH) factor )*
-static ASTNode* parse_term() {
-    ASTNode* left_node = parse_factor();
+// Renamed to parse_multiplicative_expression
+static ASTNode* parse_multiplicative_expression(SymbolTable* current_st) { 
+    ASTNode* left_node = parse_primary_expression(current_st); 
     if (parser_error_occurred || !left_node) {
-        return NULL; // Error already reported by parse_factor or its children
+        return NULL; 
     }
 
     while (peek_token().type == TOKEN_STAR || peek_token().type == TOKEN_SLASH) {
-        Token operator_token = eat_token(peek_token().type); // Consume TOKEN_STAR or TOKEN_SLASH
-        if (parser_error_occurred) { // eat_token failed
+        Token operator_token = eat_token(peek_token().type); 
+        if (parser_error_occurred) { 
             free_ast_node(left_node);
             return NULL;
         }
 
-        ASTNode* right_node = parse_factor();
+        ASTNode* right_node = parse_primary_expression(current_st); 
         if (parser_error_occurred || !right_node) {
-            // Error reported by parse_factor or its children for the right operand.
-            free_ast_node(left_node); // Clean up the successfully parsed left node.
+            free_ast_node(left_node); 
             return NULL;
         }
 
         left_node = (ASTNode*)create_binary_operation_node(left_node, operator_token.type, right_node);
-        if (parser_error_occurred || !left_node) { // create_binary_operation_node failed
-            // create_binary_operation_node should free its children on failure,
-            // so left_node and right_node (original values) would have been freed.
-            // If left_node became NULL due to this, the loop condition will handle it or next check.
-            return NULL; // Propagate error
+        if (parser_error_occurred || !left_node) { 
+            return NULL; 
         }
     }
     return left_node;
 }
 
 // expression : term ( (TOKEN_PLUS | TOKEN_MINUS) term )*
-// (Modified from the previous simple version)
-static ASTNode* parse_expression() {
-    ASTNode* left_node = parse_term();
+// Renamed to parse_additive_expression
+static ASTNode* parse_additive_expression(SymbolTable* current_st) { 
+    ASTNode* left_node = parse_multiplicative_expression(current_st); 
     if (parser_error_occurred || !left_node) {
-        // Error already reported by parse_term or its children.
         return NULL;
     }
 
     while (peek_token().type == TOKEN_PLUS || peek_token().type == TOKEN_MINUS) {
-        Token operator_token = eat_token(peek_token().type); // Consume TOKEN_PLUS or TOKEN_MINUS
-        if (parser_error_occurred) { // eat_token failed
+        Token operator_token = eat_token(peek_token().type); 
+        if (parser_error_occurred) { 
             free_ast_node(left_node);
             return NULL;
         }
 
-        ASTNode* right_node = parse_term();
+        ASTNode* right_node = parse_multiplicative_expression(current_st); 
         if (parser_error_occurred || !right_node) {
-            // Error reported by parse_term or its children for the right operand.
-            free_ast_node(left_node); // Clean up the successfully parsed left node.
+            free_ast_node(left_node); 
             return NULL;
         }
 
         left_node = (ASTNode*)create_binary_operation_node(left_node, operator_token.type, right_node);
-        if (parser_error_occurred || !left_node) { // create_binary_operation_node failed
-            // create_binary_operation_node should free its children on failure.
-            return NULL; // Propagate error
+        if (parser_error_occurred || !left_node) { 
+            return NULL; 
         }
     }
     return left_node;
 }
 
+// New function for comparison expressions
+// comparison_expression : additive_expression ( (TOKEN_EQ_EQ | TOKEN_NOT_EQ | ... ) additive_expression )*
+static ASTNode* parse_comparison_expression(SymbolTable* current_st) {
+    ASTNode* left_node = parse_additive_expression(current_st);
+    if (parser_error_occurred || !left_node) {
+        return NULL;
+    }
 
-static ReturnStatementNode* parse_return_statement() {
-    Token return_keyword_token = eat_token(TOKEN_RETURN); // Keep for location if needed
+    while (peek_token().type == TOKEN_EQ_EQ || peek_token().type == TOKEN_NOT_EQ ||
+           peek_token().type == TOKEN_LESS || peek_token().type == TOKEN_LESS_EQ ||
+           peek_token().type == TOKEN_GREATER || peek_token().type == TOKEN_GREATER_EQ) {
+        
+        Token operator_token = eat_token(peek_token().type);
+        if (parser_error_occurred) {
+            free_ast_node(left_node);
+            return NULL;
+        }
+
+        ASTNode* right_node = parse_additive_expression(current_st);
+        if (parser_error_occurred || !right_node) {
+            free_ast_node(left_node);
+            return NULL;
+        }
+
+        left_node = (ASTNode*)create_binary_operation_node(left_node, operator_token.type, right_node);
+        if (parser_error_occurred || !left_node) {
+            // create_binary_operation_node should handle freeing children on its own failure
+            return NULL;
+        }
+    }
+    return left_node;
+}
+
+// New top-level expression parsing function
+static ASTNode* parse_expression(SymbolTable* current_st) {
+    return parse_comparison_expression(current_st);
+}
+
+
+static ReturnStatementNode* parse_return_statement(SymbolTable* current_st) { 
+    Token return_keyword_token = eat_token(TOKEN_RETURN); 
     if (parser_error_occurred) return NULL;
 
-    ASTNode* expression = parse_expression();
-    if (parser_error_occurred) return NULL; // Error already reported by parse_expression or its children
-    if (!expression) { // Should not happen if no error occurred, but as a safeguard
+    ASTNode* expression = parse_expression(current_st); // Pass symbol table
+    if (parser_error_occurred) return NULL; 
+    if (!expression) { 
         report_error("Missing expression after 'return' keyword", return_keyword_token);
         return NULL;
     }
@@ -427,34 +557,128 @@ static ReturnStatementNode* parse_return_statement() {
     return create_return_statement_node(expression);
 }
 
-// Parse a single statement. For now, only return statements.
-static ASTNode* parse_statement() {
-    if (peek_token().type == TOKEN_RETURN) {
-        return (ASTNode*)parse_return_statement();
+// --- AST Node Creation Helper for VariableDeclarationNode ---
+static VariableDeclarationNode* create_variable_declaration_node(Token type_token, Token identifier_token) {
+    VariableDeclarationNode* decl_node = (VariableDeclarationNode*)malloc(sizeof(VariableDeclarationNode));
+    if (!decl_node) {
+        report_error("Memory allocation failed for VariableDeclarationNode", identifier_token);
+        return NULL;
     }
-    // Future: add other statement types like variable declarations, assignments, if-statements, etc.
-    // else if (peek_token().type == TOKEN_INT) { return parse_variable_declaration(); }
+    decl_node->base.type = AST_NODE_VARIABLE_DECLARATION;
+    decl_node->type_token = type_token; // Store the whole token for 'int'
+    
+    // strdup the variable name
+    decl_node->variable_name = (char*)malloc(identifier_token.lexeme_length + 1);
+    if (!decl_node->variable_name) {
+        report_error("Memory allocation failed for variable name string", identifier_token);
+        free(decl_node);
+        return NULL;
+    }
+    strncpy(decl_node->variable_name, identifier_token.lexeme_start, identifier_token.lexeme_length);
+    decl_node->variable_name[identifier_token.lexeme_length] = '\0';
+    
+    return decl_node;
+}
+
+
+// Parse a variable declaration statement: "int <identifier> ;"
+static ASTNode* parse_variable_declaration_statement(SymbolTable* current_st) {
+    Token type_token = eat_token(TOKEN_INT); // Expect 'int'
+    if (parser_error_occurred) return NULL;
+
+    Token identifier_token = eat_token(TOKEN_IDENTIFIER);
+    if (parser_error_occurred) return NULL;
+
+    eat_token(TOKEN_SEMICOLON);
+    if (parser_error_occurred) return NULL; // Note: identifier_token.lexeme_start is not heap allocated by eat_token
+
+    // Create AST node
+    VariableDeclarationNode* decl_node = create_variable_declaration_node(type_token, identifier_token);
+    if (!decl_node) { // Error in create_variable_declaration_node (malloc or strdup failed)
+        // Error already reported by create_variable_declaration_node
+        return NULL;
+    }
+
+    // Add to symbol table
+    if (!symbol_table_add(current_st, decl_node->variable_name, type_token.type)) {
+        // Error (e.g., re-declaration) already printed by symbol_table_add
+        free(decl_node->variable_name); // Free the strdup'd name
+        free(decl_node);                // Free the AST node
+        parser_error_occurred = 1;      // Ensure error flag is set
+        return NULL;
+    }
+
+    return (ASTNode*)decl_node;
+}
+
+
+// Parse a single statement.
+static ASTNode* parse_statement(SymbolTable* current_st) {
+    if (peek_token().type == TOKEN_INT) { // Variable Declaration
+        return parse_variable_declaration_statement(current_st);
+    } else if (peek_token().type == TOKEN_RETURN) { // Return Statement
+        return (ASTNode*)parse_return_statement(current_st); // Pass current_st
+    } else if (peek_token().type == TOKEN_IF) { // If Statement
+        return parse_if_statement(current_st);
+    } else if (peek_token().type == TOKEN_IDENTIFIER) { // Potential Assignment
+        Token identifier_token = peek_token(); 
+
+        char var_name_buffer[256]; 
+        if (identifier_token.lexeme_length >= 256) {
+             report_error("Identifier too long for assignment lookup", identifier_token);
+             return NULL;
+        }
+        strncpy(var_name_buffer, identifier_token.lexeme_start, identifier_token.lexeme_length);
+        var_name_buffer[identifier_token.lexeme_length] = '\0';
+
+        if (symbol_table_lookup(current_st, var_name_buffer) == NULL) {
+            char error_msg[300];
+            sprintf(error_msg, "Variable '%.*s' not declared before assignment.", identifier_token.lexeme_length, identifier_token.lexeme_start);
+            report_error(error_msg, identifier_token);
+            return NULL;
+        }
+        
+        eat_token(TOKEN_IDENTIFIER); 
+        if (parser_error_occurred) return NULL;
+
+
+        if (peek_token().type == TOKEN_EQUAL) { // Check if it's an assignment
+            eat_token(TOKEN_EQUAL); 
+            if (parser_error_occurred) return NULL;
+
+            ASTNode* rhs_expr = parse_expression(current_st); 
+            if (parser_error_occurred || !rhs_expr) {
+                return NULL;
+            }
+
+            eat_token(TOKEN_SEMICOLON);
+            if (parser_error_occurred) {
+                free_ast_node(rhs_expr);
+                return NULL;
+            }
+            return create_assignment_statement_node(identifier_token, rhs_expr);
+        } else { // Not an assignment, could be a standalone expression statement in future, or error
+            char error_msg[300];
+            sprintf(error_msg, "Expected '=' after identifier '%.*s' for assignment, or part of an expression statement (not yet supported).", 
+                    identifier_token.lexeme_length, identifier_token.lexeme_start);
+            report_error(error_msg, identifier_token);
+            return NULL;
+        }
+    }
     else {
-        report_error("Expected a statement (e.g., 'return')", peek_token());
+        report_error("Expected a statement (declaration, return, if, or assignment)", peek_token());
         return NULL;
     }
 }
 
 // Function body: '{' statement* '}'
-// For now, it expects exactly one 'return' statement.
-// The structure is set up for multiple statements.
-static FunctionBodyNode* parse_function_body() {
+static FunctionBodyNode* parse_function_body(SymbolTable* current_st) { // Takes SymbolTable
     FunctionBodyNode* body = create_function_body_node();
     if (!body) return NULL; // Error in creation (malloc failed)
 
-    // Loop to parse multiple statements (though current grammar only allows one 'return')
-    // This loop will effectively run once for "return <expr>;"
-    // and then expect '}'
     while (peek_token().type != TOKEN_RBRACE && peek_token().type != TOKEN_EOF && !parser_error_occurred) {
-        ASTNode* stmt = parse_statement();
-        if (parser_error_occurred) { // If parse_statement failed
-            // stmt might be NULL or partially constructed.
-            // parse_statement should handle its own cleanup on error.
+        ASTNode* stmt = parse_statement(current_st); // Pass symbol table
+        if (parser_error_occurred) { 
             // We just need to free the body.
             // The current free_ast_node for FunctionDeclaration will iterate statements,
             // so if any were added before error, they will be freed.
