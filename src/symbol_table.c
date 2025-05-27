@@ -1,21 +1,27 @@
 #include "symbol_table.h"
 #include <string.h>   // For strdup, strcmp
-#include <stdio.h>    // For fprintf, perror (if needed for strdup)
-#include <stdlib.h>   // For free (if strdup fails, though not explicitly handled beyond check)
-#include <stdbool.h>  // Already included in .h but good practice if used directly
+#include <stdio.h>    // For fprintf (used only if strdup fails and no other report mechanism)
+#include <stdlib.h>   // For free
+#include <stdbool.h>  // For bool, though SymbolTableStatus is used now
 
 void symbol_table_init(SymbolTable* st) {
     if (!st) return;
     st->count = 0;
-    st->current_stack_offset = 0; // First variable will be at -4, then -8, etc.
-    // No need to initialize individual symbol names to NULL,
-    // as they are only accessed up to st->count, and strdup handles new allocations.
+    // current_stack_offset is for local variables, managed by the parser when adding locals.
+    // It starts at 0, and the parser will decrement it for locals (e.g., -4, -8).
+    st->current_stack_offset = 0; 
 }
 
-bool symbol_table_add(SymbolTable* st, const char* name, TokenType type) {
-    if (!st || !name) return SYMBOL_TABLE_ERROR_MALLOC_FAILED; // Or some other error for invalid args
+SymbolTableStatus symbol_table_add(SymbolTable* st, const char* name, TokenType type, int stack_offset) {
+    if (!st || !name) {
+        // This case should ideally not be reached if callers are valid.
+        // If it is, it's an internal error. Not a typical symbol table status.
+        // For robustness, let's consider it a form of malloc failure if args are bad.
+        return SYMBOL_TABLE_ERROR_MALLOC_FAILED; 
+    }
 
-    // Check if symbol already exists
+    // Check if symbol already exists (basic check, full scope handling is more complex)
+    // For current single-scope-per-function, this is sufficient.
     if (symbol_table_lookup(st, name) != NULL) {
         return SYMBOL_TABLE_ERROR_ALREADY_EXISTS;
     }
@@ -25,21 +31,15 @@ bool symbol_table_add(SymbolTable* st, const char* name, TokenType type) {
         return SYMBOL_TABLE_ERROR_TABLE_FULL;
     }
 
-    // Calculate new stack offset (assuming 4-byte integers for now)
-    int new_offset = st->current_stack_offset - 4;
-
-    // Store the symbol
     char* name_copy = strdup(name);
     if (!name_copy) {
-        // perror("Error: strdup failed to copy variable name"); // Keep perror for system error context if desired, but don't fprintf
+        // perror("strdup failed in symbol_table_add"); // Optional: log to stderr
         return SYMBOL_TABLE_ERROR_MALLOC_FAILED;
     }
     
-    st->current_stack_offset = new_offset; // Commit offset change only after strdup success
-
     st->symbols[st->count].name = name_copy;
-    st->symbols[st->count].type = type; // For now, only TOKEN_INT for variables
-    st->symbols[st->count].stack_offset = st->current_stack_offset;
+    st->symbols[st->count].type = type; 
+    st->symbols[st->count].stack_offset = stack_offset; // Use provided offset directly
     st->symbols[st->count].scope_level = 1; // Default to global/main scope for now
 
     st->count++;
@@ -49,7 +49,7 @@ bool symbol_table_add(SymbolTable* st, const char* name, TokenType type) {
 Symbol* symbol_table_lookup(SymbolTable* st, const char* name) {
     if (!st || !name) return NULL;
 
-    // Iterate backwards to find the most recent declaration (handles shadowing in future)
+    // Iterate backwards to find the most recent declaration (handles shadowing in future if scopes are nested)
     for (int i = st->count - 1; i >= 0; i--) {
         if (st->symbols[i].name && strcmp(st->symbols[i].name, name) == 0) {
             return &st->symbols[i];
@@ -64,10 +64,9 @@ void symbol_table_destroy(SymbolTable* st) {
     for (int i = 0; i < st->count; i++) {
         if (st->symbols[i].name) {
             free(st->symbols[i].name);
-            st->symbols[i].name = NULL; // Good practice
+            st->symbols[i].name = NULL; 
         }
     }
     st->count = 0;
-    st->current_stack_offset = 0;
-    // No need to re-initialize individual symbol members beyond freeing names and resetting count.
+    st->current_stack_offset = 0; 
 }

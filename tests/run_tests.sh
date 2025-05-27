@@ -97,6 +97,10 @@ run_test_case "if_true"
 run_test_case "if_false"
 run_test_case "if_else_true"
 run_test_case "if_else_false"
+# Add new function parameter tests
+run_test_case "func_param_simple_return"
+run_test_case "func_param_add"
+run_test_case "func_param_with_local_var"
 
 # --- Error Test Cases ---
 echo ""

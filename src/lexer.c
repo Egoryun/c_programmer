@@ -147,6 +147,11 @@ Token get_next_token(const char** source_code_pointer) {
                     *source_code_pointer = current;
                     return make_token(TOKEN_GREATER, start_of_lexeme, 1, current_line, token_start_column);
                 }
+            case ',':
+                current++;
+                *source_code_pointer = current;
+                current_column++;
+                return make_token(TOKEN_COMMA, start_of_lexeme, 1, current_line, token_start_column);
 
             default:
                 if (isalpha(*current) || *current == '_') { // Identifiers or keywords

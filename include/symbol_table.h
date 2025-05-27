@@ -31,7 +31,7 @@ typedef struct {
 
 // Function Prototypes
 void symbol_table_init(SymbolTable* st);
-SymbolTableStatus symbol_table_add(SymbolTable* st, const char* name, TokenType type); // Modified return type
+SymbolTableStatus symbol_table_add(SymbolTable* st, const char* name, TokenType type, int stack_offset); // Modified signature
 Symbol* symbol_table_lookup(SymbolTable* st, const char* name);
 void symbol_table_destroy(SymbolTable* st);
 

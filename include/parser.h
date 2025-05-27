@@ -1,119 +1,119 @@
 #ifndef PARSER_H
 #define PARSER_H
 
-#include "lexer.h" // For Token and TokenType
+#include "lexer.h"        // For Token, TokenType
 #include "symbol_table.h" // For SymbolTable
+#include <stdbool.h>
 
-// --- AST Node Types ---
+// --- Abstract Syntax Tree (AST) Node Types ---
 typedef enum {
     AST_NODE_PROGRAM,
     AST_NODE_FUNCTION_DECLARATION,
+    AST_NODE_FUNCTION_BODY,       // Represents a block of statements
+    AST_NODE_VARIABLE_DECLARATION,
+    AST_NODE_ASSIGNMENT_STATEMENT,
+    AST_NODE_VARIABLE_USAGE,
     AST_NODE_RETURN_STATEMENT,
+    AST_NODE_IF_STATEMENT,
     AST_NODE_INTEGER_LITERAL,
     AST_NODE_BINARY_OPERATION,
-    AST_NODE_VARIABLE_DECLARATION, 
-    AST_NODE_ASSIGNMENT_STATEMENT, 
-    AST_NODE_VARIABLE_USAGE,       
-    AST_NODE_IF_STATEMENT,         // New
-    AST_NODE_FUNCTION_BODY,        // New (or ensure it's correctly placed if pre-existing)
-    // Add more types as the language grows
+    AST_NODE_FUNCTION_CALL      // New
 } ASTNodeType;
 
-// --- Base AST Node Structure ---
-// All AST nodes will have this as their first member for polymorphism
+// Base AST Node Structure (common to all specific node types)
 typedef struct ASTNode {
     ASTNodeType type;
 } ASTNode;
 
 // --- Specific AST Node Structures ---
 
-// Integer Literal: e.g., 42
-typedef struct {
+typedef struct IntegerLiteralNode {
     ASTNode base;
+    Token token_literal; // The original token for the integer
     int value;
-    Token token_literal; // Store the original token for location/debugging
 } IntegerLiteralNode;
 
-// Binary Operation: e.g., 1 + 2
 typedef struct BinaryOperationNode {
-    ASTNode base;                // type will be AST_NODE_BINARY_OPERATION
-    struct ASTNode* left;        // Left-hand side expression
-    TokenType operator_token_type; // Type of the operator (e.g., TOKEN_PLUS)
-    struct ASTNode* right;       // Right-hand side expression
+    ASTNode base;
+    struct ASTNode* left;
+    TokenType operator_token_type; // e.g., TOKEN_PLUS, TOKEN_EQ_EQ
+    struct ASTNode* right;
 } BinaryOperationNode;
 
-// Variable Declaration: e.g., int x;
-typedef struct VariableDeclarationNode {
-    ASTNode base;              // type will be AST_NODE_VARIABLE_DECLARATION
-    TokenType type_token_type; // Should be TOKEN_INT for now
-    char* variable_name;       // strdup'd from token
-} VariableDeclarationNode;
-
-// Assignment Statement: e.g., x = 42;
-typedef struct AssignmentStatementNode {
-    ASTNode base;               // type will be AST_NODE_ASSIGNMENT_STATEMENT
-    char* variable_name;        // strdup'd from token
-    struct ASTNode* expression; // AST for the right-hand side
-} AssignmentStatementNode;
-
-// Variable Usage (in an expression): e.g., return x; or y = x + 1;
-typedef struct VariableUsageNode {
-    ASTNode base;              // type will be AST_NODE_VARIABLE_USAGE
-    char* variable_name;       // strdup'd from token
-} VariableUsageNode;
-
-// Return Statement: e.g., return 42;
-typedef struct {
+typedef struct ReturnStatementNode {
     ASTNode base;
-    ASTNode* expression; // The expression being returned
+    struct ASTNode* expression;
 } ReturnStatementNode;
 
-// If Statement: e.g., if (condition) { ... } else { ... }
-typedef struct IfStatementNode {
-    ASTNode base;                       // type will be AST_NODE_IF_STATEMENT
-    struct ASTNode* condition;          // Expression for the condition
-    struct FunctionBodyNode* then_block; // Statements for the 'then' part
-    struct FunctionBodyNode* else_block; // Statements for the 'else' part (can be NULL)
-} IfStatementNode;
-
-// Function Body: A sequence of statements
-typedef struct {
+typedef struct VariableDeclarationNode {
     ASTNode base;
-    ASTNode** statements;     // Array of statement ASTNode pointers
-    int statement_count;      // Number of statements in the array
-    int capacity;             // Allocated capacity of the statements array
+    Token type_token;       // e.g., the TOKEN_INT token
+    char* variable_name;    // strdup'd
+} VariableDeclarationNode;
+
+typedef struct AssignmentStatementNode {
+    ASTNode base;
+    char* variable_name;    // strdup'd name of variable being assigned to
+    struct ASTNode* expression; // RHS expression
+} AssignmentStatementNode;
+
+typedef struct VariableUsageNode {
+    ASTNode base;
+    char* variable_name;    // strdup'd name of variable being used
+} VariableUsageNode;
+
+// Represents a block of statements, e.g., function body or if/else block body
+typedef struct FunctionBodyNode {
+    ASTNode base; // type will be AST_NODE_FUNCTION_BODY
+    struct ASTNode** statements;
+    int statement_count;
+    int capacity;
 } FunctionBodyNode;
 
-// Function Declaration: e.g., int main() { ... }
-typedef struct FunctionDeclarationNode { // Added struct tag for self-reference if needed later
+typedef struct ParameterNode {
+    Token type_token; 
+    Token name_token; 
+} ParameterNode;
+
+typedef struct FunctionDeclarationNode {
     ASTNode base;
-    Token function_name; // e.g., "main"
-    SymbolTable symbol_table; // For local variables
-    FunctionBodyNode* body;
+    Token function_name_token;
+    SymbolTable symbol_table;      // Symbol table for this function's scope
+    struct ParameterNode* parameters;
+    int num_parameters;
+    int capacity_parameters;
+    struct FunctionBodyNode* body;
 } FunctionDeclarationNode;
 
-// Program Node: The root of the AST
-// For this minimal compiler, a program is just one function declaration (main)
-typedef struct {
+typedef struct IfStatementNode {
     ASTNode base;
-    FunctionDeclarationNode* function_declaration;
+    struct ASTNode* condition;
+    struct FunctionBodyNode* then_block;
+    struct FunctionBodyNode* else_block; // Can be NULL
+} IfStatementNode;
+
+// New Node for Function Calls
+typedef struct FunctionCallNode {
+    ASTNode base;
+    char* function_name;          // strdup'd name of the function being called
+    struct ASTNode** arguments;   // Dynamically allocated array of argument expressions
+    int num_arguments;
+    int capacity_arguments;       // Current capacity of the arguments array
+} FunctionCallNode;
+
+typedef struct ProgramNode {
+    ASTNode base;
+    struct FunctionDeclarationNode** functions;
+    int num_functions;
+    int capacity_functions;
 } ProgramNode;
 
 
-// --- Parser Function Prototypes ---
-
-// Main parsing function
+// --- Main Parser Function ---
 ProgramNode* parse(const char* source_code);
 
-// --- AST Memory Management Function Prototypes ---
-void free_ast_node(ASTNode* node); // General function to free any AST node
-void free_program_node(ProgramNode* program_node);
-
-// --- Helper Function Prototypes for Parser (typically in parser.c but declared here if needed by other modules) ---
-// These might be static in parser.c if not needed externally.
-
-// Function prototype for resetting lexer state (defined in lexer.c)
-void reset_lexer_state();
-
+// --- AST Freeing Function ---
+void free_program_node(ProgramNode* program_node); // Frees the entire AST
+void free_ast_node(ASTNode* node); // Helper, usually static in parser.c but prototype if needed elsewhere
 
 #endif // PARSER_H

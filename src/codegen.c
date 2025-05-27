@@ -26,11 +26,17 @@ void generate_assembly(ProgramNode* program_ast, FILE* outfile) {
         return;
     }
 
-    // A program consists of a single function declaration (main)
-    if (program_ast->function_declaration) {
-        generate_function_declaration_assembly(program_ast->function_declaration, outfile);
+    // A program consists of potentially multiple function declarations
+    if (program_ast->functions && program_ast->num_functions > 0) {
+        for (int i = 0; i < program_ast->num_functions; ++i) {
+            if (program_ast->functions[i]) {
+                generate_function_declaration_assembly(program_ast->functions[i], outfile);
+            } else {
+                fprintf(stderr, "Codegen Error: Found NULL function declaration in ProgramNode at index %d.\n", i);
+            }
+        }
     } else {
-        fprintf(stderr, "Codegen Error: ProgramNode has no function declaration.\n");
+        fprintf(stderr, "Codegen Error: ProgramNode has no function declarations or functions array is NULL.\n");
     }
 }
 
@@ -42,22 +48,38 @@ static void generate_function_declaration_assembly(FunctionDeclarationNode* func
         return;
     }
 
+    char func_name_str[256]; 
+    if (func_decl_node->function_name_token.lexeme_length >= sizeof(func_name_str)) {
+        fprintf(stderr, "Codegen Error: Function name '%.*s' too long.\n", 
+                func_decl_node->function_name_token.lexeme_length, 
+                func_decl_node->function_name_token.lexeme_start);
+        // Potentially set a global error flag or exit, as this is a critical error.
+        return; 
+    }
+    strncpy(func_name_str, 
+            func_decl_node->function_name_token.lexeme_start, 
+            func_decl_node->function_name_token.lexeme_length);
+    func_name_str[func_decl_node->function_name_token.lexeme_length] = '\0';
+
     // Emit global directive for the function name
-    // Assuming function_name token holds "main"
-    fprintf(outfile, ".globl %.*s\n", func_decl_node->function_name.lexeme_length, func_decl_node->function_name.lexeme_start);
+    fprintf(outfile, ".globl %s\n", func_name_str);
     // Emit label for the function
-    fprintf(outfile, "%.*s:\n", func_decl_node->function_name.lexeme_length, func_decl_node->function_name.lexeme_start);
+    fprintf(outfile, "%s:\n", func_name_str);
 
     // Prologue
     fputs("    pushq %rbp\n", outfile);
     fputs("    movq %rsp, %rbp\n", outfile);
 
     // Calculate stack space for local variables
-    int total_var_size = -(func_decl_node->symbol_table.current_stack_offset); 
-    if (total_var_size < 0) total_var_size = 0; 
+    // current_stack_offset is negative (e.g., -4 for one var, -8 for two)
+    // So, -(-N) = N gives the positive size to subtract from RSP.
+    int total_local_var_size = -(func_decl_node->symbol_table.current_stack_offset); 
+    if (total_local_var_size < 0) { // Should not happen if current_stack_offset is 0 or negative
+        total_local_var_size = 0; 
+    }
 
-    if (total_var_size > 0) {
-        fprintf(outfile, "    subq $%d, %%rsp\n", total_var_size);
+    if (total_local_var_size > 0) {
+        fprintf(outfile, "    subq $%d, %%rsp\n", total_local_var_size);
     }
 
     // Body
@@ -75,9 +97,15 @@ static void generate_function_declaration_assembly(FunctionDeclarationNode* func
     }
 
     // Epilogue
-    fputs("    movq %rbp, %rsp\n", outfile); // Deallocate locals
-    fputs("    popq %rbp\n", outfile);
+    // Ensure a return statement has been generated, which should place return value in %eax.
+    // If the function is void or ends without a return (which our grammar doesn't allow for main yet),
+    // this epilogue is standard. For non-main functions, the last statement must be a return
+    // to ensure %eax is set. Our current grammar forces return.
+    
+    // The 'leave' instruction is equivalent to 'movq %rbp, %rsp' then 'popq %rbp'
+    fputs("    leave\n", outfile); 
     fputs("    ret\n", outfile);
+    fprintf(outfile, "\n"); // Add a blank line for readability between functions
 }
 
 static void generate_statement_assembly(ASTNode* statement_node, SymbolTable* st, FILE* outfile) { // Modified
@@ -257,6 +285,28 @@ static void generate_expression_assembly(ASTNode* expression_node, SymbolTable* 
         default:
             fprintf(stderr, "Codegen Error: Unsupported expression type: %d. Defaulting expression value to 0.\n", expression_node->type);
             fprintf(outfile, "    movl $0, %%eax # Default for unsupported expression\n");
+            break;
+        case AST_NODE_FUNCTION_CALL:
+            {
+                FunctionCallNode* call_node = (FunctionCallNode*)expression_node;
+                int arg_stack_space = 0;
+
+                // Push arguments onto the stack (right-to-left)
+                for (int i = call_node->num_arguments - 1; i >= 0; i--) {
+                    generate_expression_assembly(call_node->arguments[i], st, outfile);
+                    fprintf(outfile, "    pushl %%eax\n"); // Push 32-bit argument
+                    arg_stack_space += 4; // Assuming 4-byte integers
+                }
+
+                // Call the function
+                fprintf(outfile, "    call %s\n", call_node->function_name);
+
+                // Clean up the stack (remove arguments)
+                if (arg_stack_space > 0) {
+                    fprintf(outfile, "    addq $%d, %%rsp\n", arg_stack_space);
+                }
+                // The return value is in %eax by convention
+            }
             break;
     }
 }

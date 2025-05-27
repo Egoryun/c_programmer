@@ -25,6 +25,7 @@ typedef enum {
     TOKEN_GREATER_EQ,      // >=
     TOKEN_IF,              // if
     TOKEN_ELSE,            // else
+    TOKEN_COMMA,           // ,
     TOKEN_EOF,             // End of Input
     TOKEN_UNKNOWN          // Unrecognized character
 } TokenType;
